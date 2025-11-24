@@ -111,6 +111,68 @@ def list_trades(limit: int, asset_id: str):
         console.print(f"[red]Error: {e}[/red]")
         raise click.Abort()
 
+@cli.command()
+@click.option('--asset-id', '-a', required=True, help='Asset ID to copy')
+@click.option('--fixed-amount', '-f', default=None, type=float, help='Fixed USD amount to spend (default: 0.001 from config)')
+@click.option('--execute', is_flag=True, help='Actually execute trade (requires private key)')
+@click.option('--skip-question-details', is_flag=True, help='Skip querying question details for faster execution')
+def copy_position(asset_id: str, fixed_amount: float, execute: bool, skip_question_details: bool):
+    """Copy a specific position by asset ID."""
+    if not skip_question_details:
+        console.print(f"[cyan]Fetching question details for asset: {asset_id}[/cyan]")
+    else:
+        console.print(f"[cyan]Copying position for asset: {asset_id}[/cyan]")
+    
+    client = BitqueryClient()
+    tracker = PositionTracker(client)
+    
+    try:
+        # First, get and display question details (ancillary_data) unless skipped
+        if not skip_question_details:
+            console.print("[cyan]Fetching market question details...[/cyan]")
+            ancillary_data = tracker.get_question_details(asset_id)
+            
+            if ancillary_data:
+                # Display ancillary_data in a nice format
+                question_panel = Panel(
+                    f"[bold cyan]Ancillary Data:[/bold cyan]\n{ancillary_data}",
+                    title="Market Question Details",
+                    border_style="green"
+                )
+                console.print(question_panel)
+                console.print()  # Add spacing
+            else:
+                console.print("[yellow]Could not fetch question details. Continuing with position copy...[/yellow]")
+                console.print()
+        
+        # Now get positions
+        console.print(f"[cyan]Fetching position data for asset: {asset_id}[/cyan]")
+        positions = tracker.get_positions_by_asset(asset_id)
+        
+        if not positions:
+            console.print(f"[yellow]No positions found for asset ID: {asset_id}[/yellow]")
+            return
+        
+        # Use the most recent position
+        latest_position = max(positions, key=lambda p: p.timestamp)
+        
+        console.print(Panel(
+            f"[green]Asset ID:[/green] {latest_position.asset_id}\n"
+            # f"[green]Trader:[/green] {latest_position.trader_address}\n"
+            f"[green]Maker:[/green] {latest_position.maker_address}\n"
+            f"[green]Taker:[/green] {latest_position.taker_address}\n"
+            f"[green]Amount:[/green] {latest_position.amount:.4f}\n"
+            f"[green]Price:[/green] {latest_position.price:.4f}\n"
+            f"[green]Direction:[/green] {latest_position.direction}\n"
+            f"[green]Time:[/green] {latest_position.timestamp}",
+            title="Position Details",
+            border_style="cyan"
+        ))
+        
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise click.Abort()
 
 @cli.command()
 @click.option('--address', '-a', required=True, help='Trader wallet address')
