@@ -57,11 +57,12 @@ python3 cli.py list-trades --asset-id 0xasset...
 ```
 ![](/listtrades.png)
 
-### Inspect an asset
+### Copy a Position
 ```bash
 python3 cli.py copy-position --asset-id <ASSET_ID> --skip-question-details
 python3 cli.py copy-position --asset-id <ASSET_ID> --execute  # requires working CopyTrader
 ```
+![](/copyposition.png)
 
 ### Top Trader
 ```bash
