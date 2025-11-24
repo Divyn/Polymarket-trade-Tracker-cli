@@ -1,4 +1,4 @@
-# Polymarket Copytrade CLI
+# Polymarket Trade Data CLI
 
 Pulled-apart tooling for inspecting OrderFilled events on the Polymarket CTF Exchange. The repository exposes a single Click-powered CLI plus a handful of helpers that normalize trades and follow top traders.
 
