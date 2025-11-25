@@ -1,6 +1,6 @@
 """Bitquery GraphQL client for querying Polymarket CTF Exchange events."""
 import requests
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 from config import Config
 
 class BitqueryClient:
@@ -16,7 +16,7 @@ class BitqueryClient:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
     
     def _execute_query(self, query: str, variables: Optional[Dict] = None) -> Dict:
-        """Execute a GraphQL query."""
+        """Execute a GraphQL query with a sane default timeout."""
         payload = {"query": query}
         if variables:
             payload["variables"] = variables
@@ -24,7 +24,8 @@ class BitqueryClient:
         response = requests.post(
             self.api_url,
             json=payload,
-            headers=self.headers
+            headers=self.headers,
+            timeout=30,
         )
         response.raise_for_status()
         return response.json()
@@ -791,4 +792,76 @@ class BitqueryClient:
         except Exception as e:
             print(f"Error fetching question data by question ID: {e}")
             return []
+
+    def get_recent_question_initialized_events(self, limit: int = 25) -> List[Dict]:
+        """Fetch recent QuestionInitialized events for ancillaryData analysis."""
+        query = f"""
+        {{
+          EVM(dataset: {Config.DATASET}, network: {Config.NETWORK}) {{
+            Events(
+              orderBy: {{descending: Block_Time}}
+              where: {{
+                Log: {{Signature: {{Name: {{in: ["QuestionInitialized"]}}}}}},
+                LogHeader: {{
+                  Address: {{
+                    is: "{Config.QUESTION_CONTRACT_ADDRESS}"
+                  }}
+                }}
+              }}
+              limit: {{count: {limit}}}
+            ) {{
+              Block {{
+                Time
+                Number
+                Hash
+              }}
+              Transaction {{
+                Hash
+                From
+                To
+              }}
+              TransactionStatus {{
+                Success
+              }}
+              Arguments {{
+                Name
+                Value {{
+                  ... on EVM_ABI_Integer_Value_Arg {{
+                    integer
+                  }}
+                  ... on EVM_ABI_Address_Value_Arg {{
+                    address
+                  }}
+                  ... on EVM_ABI_String_Value_Arg {{
+                    string
+                  }}
+                  ... on EVM_ABI_BigInt_Value_Arg {{
+                    bigInteger
+                  }}
+                  ... on EVM_ABI_Bytes_Value_Arg {{
+                    hex
+                  }}
+                  ... on EVM_ABI_Boolean_Value_Arg {{
+                    bool
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+        
+        try:
+            result = self._execute_query(query)
+        except Exception as exc:  # pragma: no cover - network errors bubble up
+            print(f"Error fetching question initialized events: {exc}")
+            return []
+
+        if "errors" in result:
+            error_messages = [err.get("message", "Unknown error") for err in result["errors"]]
+            print(f"GraphQL errors: {', '.join(error_messages)}")
+            return []
+        
+        events = result.get("data", {}).get("EVM", {}).get("Events", [])
+        return events if isinstance(events, list) else []
 
