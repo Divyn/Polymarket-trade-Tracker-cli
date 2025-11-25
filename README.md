@@ -44,6 +44,13 @@ All variables are loaded via `python-dotenv`. Do **not** check real secrets into
 
 ## CLI Usage
 
+### Analyse Topics Used in Predictions
+```cli
+python3 cli.py analyze-questions --limit 25 --show-text
+```
+![](/qa.png)
+
+
 ### Monitor a trader
 ```bash
 python3 cli.py monitor --address 0x05c1882212a41aa8d7df5b70eebe03d9319345b7 --limit 20 --copy
