@@ -5,11 +5,27 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 from datetime import datetime
+
 from bitquery_client import BitqueryClient
 from position_tracker import PositionTracker
+from question_analyzer import QuestionAnalyzer
 from config import Config
 
 console = Console(force_terminal=True, width=None)  # Allow unlimited width to prevent truncation
+
+
+def _format_time(value: datetime | None) -> str:
+    if not value:
+        return "—"
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _shorten(value: str | None, length: int = 12) -> str:
+    if not value:
+        return "—"
+    if len(value) <= length:
+        return value
+    return f"{value[:length//2]}…{value[-length//2:]}"
 
 @click.group()
 def cli():
@@ -320,6 +336,71 @@ def top_traders(limit: int, top_traders: int, top_assets: int):
         import traceback
         traceback.print_exc()
         raise click.Abort()
+
+
+@cli.command(name="analyze-questions")
+@click.option("--limit", "-l", default=25, show_default=True, help="Number of questions to analyze.")
+@click.option("--max-keywords", "-k", default=6, show_default=True, help="Keywords to surface per question.")
+@click.option("--show-text", is_flag=True, help="Print full ancillary text after the summary table.")
+def analyze_questions(limit: int, max_keywords: int, show_text: bool):
+    """Inspect UMA QuestionInitialized events and decode ancillaryData."""
+    client = BitqueryClient()
+    analyzer = QuestionAnalyzer(max_keywords=max_keywords)
+
+    console.print(f"[cyan]Fetching last {limit} QuestionInitialized events...[/cyan]")
+    events = client.get_recent_question_initialized_events(limit=limit)
+
+    if not events:
+        console.print("[yellow]No QuestionInitialized events returned by Bitquery.[/yellow]")
+        raise click.Abort()
+
+    analyses = analyzer.analyze_events(events)
+    if not analyses:
+        console.print("[yellow]No events contained ancillaryData to decode.[/yellow]")
+        raise click.Abort()
+
+    table = Table(title="Question Analyzer", expand=True)
+    table.add_column("Time (UTC)", style="blue")
+    table.add_column("Question ID", style="cyan")
+    table.add_column("Topics", style="magenta")
+    table.add_column("Keywords", style="green")
+    table.add_column("Tx Hash", style="dim")
+
+    for analysis in analyses:
+        table.add_row(
+            _format_time(analysis.block_time),
+            _shorten(analysis.question_id),
+            ", ".join(analysis.topics) if analysis.topics else "General",
+            ", ".join(analysis.keywords) if analysis.keywords else "—",
+            _shorten(analysis.tx_hash, length=16),
+        )
+
+    console.print(table)
+
+    if show_text:
+        console.print()
+        for analysis in analyses:
+            subtitle = []
+            if analysis.question_id:
+                subtitle.append(f"QID: {analysis.question_id}")
+            if analysis.condition_id:
+                subtitle.append(f"CID: {analysis.condition_id}")
+            if analysis.block_number:
+                subtitle.append(f"Block: {analysis.block_number}")
+            if analysis.tx_hash:
+                subtitle.append(f"Tx: {analysis.tx_hash}")
+
+            panel_title = " | ".join(subtitle) if subtitle else "Ancillary Data"
+            console.print(
+                Panel(
+                    analysis.ancillary_text or "[dim]No ancillary text[/dim]",
+                    title=panel_title,
+                    border_style="cyan",
+                )
+            )
+
+cli.add_command(analyze_questions, "analyze")
+
 
 if __name__ == '__main__':
     cli()
