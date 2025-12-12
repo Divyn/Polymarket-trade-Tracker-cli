@@ -5,6 +5,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 from datetime import datetime
+from typing import Optional
 
 from bitquery_client import BitqueryClient
 from position_tracker import PositionTracker
@@ -76,6 +77,74 @@ def monitor(address: str, limit: int):
         
         console.print(table)
         
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise click.Abort()
+
+@cli.command()
+@click.option('--address', '-a', required=True, help='Maker address to follow (e.g., 0xfa323e40632edca701abc6c8cf1f82175909bd9a)')
+@click.option('--limit', '-l', default=20, help='Number of positions to fetch')
+@click.option('--since-hours', '-h', type=int, default=None, help='Filter trades from the last N hours')
+def follow_trader(address: str, limit: int, since_hours: Optional[int]):
+    """Follow trades where a specific address is the maker.
+    
+    This command filters OrderFilled events where the maker address
+    matches the provided address, allowing you to track trades where
+    a specific trader is making orders.
+    """
+    console.print(f"[cyan]Following maker: {address}[/cyan]")
+    if since_hours:
+        console.print(f"[cyan]Filtering trades from last {since_hours} hours[/cyan]")
+    
+    client = BitqueryClient()
+    tracker = PositionTracker(client)
+    
+    try:
+        positions = tracker.follow_trader_positions(
+            maker_address=address,
+            limit=limit,
+            since_hours=since_hours
+        )
+        
+        if not positions:
+            console.print("[yellow]No positions found for this maker address.[/yellow]")
+            return
+        
+        # Display positions
+        table = Table(title=f"Positions where {address} is Maker", box=box.ROUNDED, expand=True, show_header=True, width=None)
+        table.add_column("Maker", style="cyan", no_wrap=False, overflow="fold", min_width=20, max_width=20)
+        table.add_column("Taker", style="cyan", no_wrap=False, overflow="fold", min_width=20, max_width=20)
+        table.add_column("Asset ID", style="green", no_wrap=False, overflow="fold", min_width=20, max_width=20)
+        table.add_column("Amount", style="yellow", justify="right", min_width=10, max_width=10)
+        table.add_column("Price", style="magenta", justify="right", min_width=10, max_width=10)
+        table.add_column("Time", style="blue", min_width=19, max_width=19)
+        table.add_column("TX Hash", style="dim", no_wrap=False, overflow="fold", min_width=20, max_width=20)
+        
+        for pos in positions:
+            table.add_row(
+                pos.maker_address,
+                pos.taker_address,
+                pos.asset_id,
+                f"{pos.amount:.4f}",
+                f"{pos.price:.4f}",
+                pos.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                pos.tx_hash
+            )
+        
+        console.print(table)
+        
+        # Display summary
+        total_volume = sum(p.amount * p.price for p in positions)
+        unique_assets = len(set(p.asset_id for p in positions))
+        console.print()
+        console.print(Panel(
+            f"[green]Total Positions:[/green] {len(positions)}\n"
+            f"[green]Total Volume:[/green] ${total_volume:.2f}\n"
+            f"[green]Unique Assets:[/green] {unique_assets}",
+            title="Summary",
+            border_style="green"
+        ))
     
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -342,62 +411,91 @@ def top_traders(limit: int, top_traders: int, top_assets: int):
 @click.option("--limit", "-l", default=25, show_default=True, help="Number of questions to analyze.")
 @click.option("--max-keywords", "-k", default=6, show_default=True, help="Keywords to surface per question.")
 @click.option("--show-text", is_flag=True, help="Print full ancillary text after the summary table.")
-def analyze_questions(limit: int, max_keywords: int, show_text: bool):
+@click.option(
+    "--log-file",
+    "-o",
+    type=click.Path(dir_okay=False, writable=True, resolve_path=True),
+    help="Also write a plain-text (no color codes) copy of the output to this file.",
+)
+def analyze_questions(limit: int, max_keywords: int, show_text: bool, log_file: str | None):
     """Inspect UMA QuestionInitialized events and decode ancillaryData."""
     client = BitqueryClient()
     analyzer = QuestionAnalyzer(max_keywords=max_keywords)
 
-    console.print(f"[cyan]Fetching last {limit} QuestionInitialized events...[/cyan]")
-    events = client.get_recent_question_initialized_events(limit=limit)
-
-    if not events:
-        console.print("[yellow]No QuestionInitialized events returned by Bitquery.[/yellow]")
-        raise click.Abort()
-
-    analyses = analyzer.analyze_events(events)
-    if not analyses:
-        console.print("[yellow]No events contained ancillaryData to decode.[/yellow]")
-        raise click.Abort()
-
-    table = Table(title="Question Analyzer", expand=True)
-    table.add_column("Time (UTC)", style="blue")
-    table.add_column("Question ID", style="cyan")
-    table.add_column("Topics", style="magenta")
-    table.add_column("Keywords", style="green")
-    table.add_column("Tx Hash", style="dim")
-
-    for analysis in analyses:
-        table.add_row(
-            _format_time(analysis.block_time),
-            _shorten(analysis.question_id),
-            ", ".join(analysis.topics) if analysis.topics else "General",
-            ", ".join(analysis.keywords) if analysis.keywords else "—",
-            _shorten(analysis.tx_hash, length=16),
+    # Optional second console that writes plain text to a file
+    log_console = None
+    log_fp = None
+    if log_file:
+        # No colors, no terminal control codes → human-readable log
+        log_fp = open(log_file, "w", encoding="utf-8")
+        log_console = Console(
+            file=log_fp,
+            force_terminal=False,
+            color_system=None,
+            width=None,
         )
 
-    console.print(table)
+    def _print(*args, **kwargs):
+        """Print to main console and (optionally) to log console."""
+        console.print(*args, **kwargs)
+        if log_console is not None:
+            log_console.print(*args, **kwargs)
 
-    if show_text:
-        console.print()
+    try:
+        _print(f"[cyan]Fetching last {limit} QuestionInitialized events...[/cyan]")
+        events = client.get_recent_question_initialized_events(limit=limit)
+
+        if not events:
+            _print("[yellow]No QuestionInitialized events returned by Bitquery.[/yellow]")
+            raise click.Abort()
+
+        analyses = analyzer.analyze_events(events)
+        if not analyses:
+            _print("[yellow]No events contained ancillaryData to decode.[/yellow]")
+            raise click.Abort()
+
+        table = Table(title="Question Analyzer", expand=True)
+        table.add_column("Time (UTC)", style="blue")
+        table.add_column("Question ID", style="cyan")
+        table.add_column("Topics", style="magenta")
+        table.add_column("Keywords", style="green")
+        table.add_column("Tx Hash", style="dim")
+
         for analysis in analyses:
-            subtitle = []
-            if analysis.question_id:
-                subtitle.append(f"QID: {analysis.question_id}")
-            if analysis.condition_id:
-                subtitle.append(f"CID: {analysis.condition_id}")
-            if analysis.block_number:
-                subtitle.append(f"Block: {analysis.block_number}")
-            if analysis.tx_hash:
-                subtitle.append(f"Tx: {analysis.tx_hash}")
-
-            panel_title = " | ".join(subtitle) if subtitle else "Ancillary Data"
-            console.print(
-                Panel(
-                    analysis.ancillary_text or "[dim]No ancillary text[/dim]",
-                    title=panel_title,
-                    border_style="cyan",
-                )
+            table.add_row(
+                _format_time(analysis.block_time),
+                _shorten(analysis.question_id),
+                ", ".join(analysis.topics) if analysis.topics else "General",
+                ", ".join(analysis.keywords) if analysis.keywords else "—",
+                _shorten(analysis.tx_hash, length=16),
             )
+
+        _print(table)
+
+        if show_text:
+            _print()
+            for analysis in analyses:
+                subtitle = []
+                if analysis.question_id:
+                    subtitle.append(f"QID: {analysis.question_id}")
+                if analysis.condition_id:
+                    subtitle.append(f"CID: {analysis.condition_id}")
+                if analysis.block_number:
+                    subtitle.append(f"Block: {analysis.block_number}")
+                if analysis.tx_hash:
+                    subtitle.append(f"Tx: {analysis.tx_hash}")
+
+                panel_title = " | ".join(subtitle) if subtitle else "Ancillary Data"
+                _print(
+                    Panel(
+                        analysis.ancillary_text or "[dim]No ancillary text[/dim]",
+                        title=panel_title,
+                        border_style="cyan",
+                    )
+                )
+    finally:
+        if log_fp is not None:
+            log_fp.close()
 
 cli.add_command(analyze_questions, "analyze")
 
