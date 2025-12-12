@@ -234,6 +234,45 @@ class PositionTracker:
         
         return positions
     
+    def follow_trader_positions(self, maker_address: str, limit: int = 10000, since_hours: Optional[int] = None) -> List[Position]:
+        """Follow positions where a specific address is the maker.
+        
+        This method filters OrderFilled events where the maker address
+        matches the provided address, allowing you to track trades where
+        a specific trader is making orders.
+        
+        Args:
+            maker_address: The maker address to filter by
+            limit: Maximum number of positions to return
+            since_hours: Optional time filter (hours ago)
+            
+        Returns:
+            List of Position objects where maker address matches
+        """
+        # Normalize address to lowercase for consistent comparison
+        maker_address_normalized = maker_address.lower() if maker_address else ""
+        
+        if not maker_address_normalized:
+            return []
+        
+        events = self.client.follow_trader(
+            maker_address=maker_address_normalized,
+            limit=limit * 2,  # Grab a few extra in case of malformed events
+            since_hours=since_hours
+        ) or []
+        
+        positions = []
+        for event in events:
+            position = self.parse_order_filled_event(event)
+            if position and position.maker_address.lower() == maker_address_normalized:
+                positions.append(position)
+                self.positions.append(position)
+                # Stop once we have enough positions
+                if len(positions) >= limit:
+                    break
+        
+        return positions
+    
     def get_recent_positions(self, limit: int = 20) -> List[Position]:
         """Get recent positions from all traders."""
         events = self.client.get_order_filled_events(limit=limit)
