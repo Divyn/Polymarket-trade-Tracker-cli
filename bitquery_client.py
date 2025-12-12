@@ -339,6 +339,120 @@ class BitqueryClient:
             print(f"Error fetching order filled events by trader: {e}")
             return []
     
+    def follow_trader(
+        self,
+        maker_address: str,
+        limit: int = 10000,
+        since_hours: Optional[int] = None
+    ) -> List[Dict]:
+        """Query OrderFilled events filtered by maker address.
+        
+        This method filters OrderFilled events where the maker address
+        matches the provided address.
+        
+        Args:
+            maker_address: The maker address to filter by (e.g., "0xfa323e40632edca701abc6c8cf1f82175909bd9a")
+            limit: Maximum number of events to return
+            since_hours: Optional time filter (hours ago)
+            
+        Returns:
+            List of OrderFilled events where maker address matches
+        """
+        if not maker_address:
+            return []
+
+        maker_address_normalized = maker_address.lower()
+
+        # Time filter
+        time_filter = ""
+        if since_hours:
+            time_filter = f'Block: {{Time: {{since_relative: {{hours_ago: {since_hours}}}}}}},'
+
+        query = f"""
+        {{
+          EVM(dataset: {Config.DATASET}, network: {Config.NETWORK}) {{
+            Events(
+              orderBy: {{descending: Block_Time}}
+              where: {{
+                {time_filter}
+                Arguments: {{
+                  includes: {{
+                    Name: {{
+                      is: "maker"
+                    }},
+                    Value: {{
+                      Address: {{
+                        is: "{maker_address_normalized}"
+                      }}
+                    }}
+                  }}
+                }},
+                Log: {{Signature: {{Name: {{in: ["OrderFilled"]}}}}}}, 
+                LogHeader: {{
+                  Address: {{
+                    in: [
+                      "{Config.CTF_EXCHANGE_ADDRESS}",
+                      "{Config.LEGACY_EXCHANGE_ADDRESS}"
+                    ]
+                  }}
+                }}
+              }}
+              limit: {{count: {limit}}}
+            ) {{
+              Block {{
+                Time
+                Number
+                Hash
+              }}
+              Transaction {{
+                Hash
+                From
+                To
+              }}
+              Arguments {{
+                Name
+                Value {{
+                  ... on EVM_ABI_Integer_Value_Arg {{
+                    integer
+                  }}
+                  ... on EVM_ABI_Address_Value_Arg {{
+                    address
+                  }}
+                  ... on EVM_ABI_String_Value_Arg {{
+                    string
+                  }}
+                  ... on EVM_ABI_BigInt_Value_Arg {{
+                    bigInteger
+                  }}
+                  ... on EVM_ABI_Bytes_Value_Arg {{
+                    hex
+                  }}
+                  ... on EVM_ABI_Boolean_Value_Arg {{
+                    bool
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+
+        try:
+            result = self._execute_query(query)
+
+            if "errors" in result:
+                error_messages = [err.get("message", "Unknown error") for err in result["errors"]]
+                print(f"GraphQL errors: {', '.join(error_messages)}")
+                return []
+
+            events = result.get("data", {}).get("EVM", {}).get("Events", [])
+            if events is None:
+                return []
+            return events if isinstance(events, list) else []
+        except Exception as e:
+            print(f"Error fetching order filled events for maker: {e}")
+            return []
+    
     def get_token_registered_events(
         self,
         limit: int = 10,
