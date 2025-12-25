@@ -663,3 +663,110 @@ class PositionTracker:
             "total_parsed": len(positions)
         }
 
+    def get_orderbook(self,asset_id: str, limit: int = 10) -> Dict:
+        """Get orderbook for a specific asset constructed from recent order filled events.
+        
+        Args:
+            asset_id: The asset ID to get orderbook for
+            limit: Maximum number of recent events to analyze
+            
+        Returns:
+            Dictionary with 'bids' and 'asks' lists, each containing price levels
+            with price, amount, and count of trades at that price level.
+        """
+        events = self.client.get_order_filled_events_by_asset_id(asset_id=asset_id, limit=limit)
+        
+        if not events:
+            return {
+                "bids": [],
+                "asks": [],
+                "asset_id": asset_id
+            }
+        
+        # Parse events into positions
+        positions = []
+        for event in events:
+            position = self.parse_order_filled_event(event)
+            if position and str(position.asset_id).strip() == str(asset_id).strip():
+                positions.append(position)
+        # print(f"Positions: {positions}")
+        if not positions:
+            return {
+                "bids": [],
+                "asks": [],
+                "asset_id": asset_id
+            }
+        
+        # Aggregate bids and asks by price
+        # Bids: trades where someone bought (paid USDC, received tokens)
+        # Asks: trades where someone sold (gave tokens, received USDC)
+        bid_levels = {}  # price -> {amount, count}
+        ask_levels = {}  # price -> {amount, count}
+        
+        for position in positions:
+            price = position.price
+            amount = position.amount
+            
+            # The trader_address is the buyer (receiving tokens) - this is a bid
+            # The other party (maker or taker) is the seller - this is an ask
+            if position.trader_address:
+                # This is a bid (buy order)
+                if price not in bid_levels:
+                    bid_levels[price] = {"amount": 0.0, "count": 0}
+                bid_levels[price]["amount"] += amount
+                bid_levels[price]["count"] += 1
+            
+            # The seller is the other party (maker or taker, whichever isn't the trader)
+            # We can infer this from the position data
+            seller_address = None
+            if position.trader_address and position.maker_address and position.taker_address:
+                trader_lower = position.trader_address.lower()
+                maker_lower = position.maker_address.lower()
+                taker_lower = position.taker_address.lower()
+                
+                if trader_lower == maker_lower:
+                    seller_address = position.taker_address
+                elif trader_lower == taker_lower:
+                    seller_address = position.maker_address
+                else:
+                    # Fallback: use the non-trader address
+                    seller_address = position.maker_address if maker_lower != trader_lower else position.taker_address
+            
+            if seller_address:
+                # This is an ask (sell order)
+                if price not in ask_levels:
+                    ask_levels[price] = {"amount": 0.0, "count": 0}
+                ask_levels[price]["amount"] += amount
+                ask_levels[price]["count"] += 1
+        
+        # Convert to sorted lists
+        # Bids: sorted by price descending (highest bid first)
+
+        bids = [
+            {
+                "price": price,
+                "amount": level["amount"],
+                "count": level["count"]
+            }
+            for price, level in sorted(bid_levels.items(),reverse=True)
+        ]
+        
+        # Asks: sorted by price ascending (lowest ask first)
+      
+        asks = [
+            {
+                "price": price,
+                "amount": level["amount"],
+                "count": level["count"]
+            }
+            for price, level in sorted(ask_levels.items())
+        ]
+        
+        return {
+            "bids": bids,
+            "asks": asks,
+            "asset_id": asset_id,
+            "total_events": len(events),
+            "total_positions": len(positions)
+        }
+

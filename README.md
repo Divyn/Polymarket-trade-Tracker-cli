@@ -10,7 +10,7 @@ Pulled-apart tooling for inspecting OrderFilled events on the Polymarket CTF Exc
 - Generate leaderboard-style tables for the most active traders/assets (configurable depth).
 - Plug in your own `CopyTrader` implementation to simulate or execute follow-on trades.
 
-> **Note:** The CLI exposes `--copy`/`copy-position` hooks, but you must supply your own safe `CopyTrader` module using Polymarket API before running them 
+> **Note:** The CLI exposes `--copy`/`copy-position` hooks, but you must supply your own safe `CopyTrader` module using Polymarket API before running them
 
 ## Prerequisites
 
@@ -45,38 +45,56 @@ All variables are loaded via `python-dotenv`. Do **not** check real secrets into
 ## CLI Usage
 
 ### Analyse Topics Used in Predictions
-```cli
+
+```bash
 python3 cli.py analyze-questions --limit 25 --show-text
 ```
+
 ![](/qa.png)
 
+### Get Orderbook
+
+Reconstruct orderbook ( bids and asks) from orderfilled events.
+
+```bash
+python3 cli.py get-orderbook --asset-id  <ASSET_ID>
+
+```
 
 ### Monitor a trader
+
 ```bash
 python3 cli.py monitor --address 0x05c1882212a41aa8d7df5b70eebe03d9319345b7 --limit 20 --copy
 ```
+
 ![](/monitoraddress.png)
 
 ### Recent trades
+
 ```bash
 python3 cli.py list-trades --limit 25
 python3 cli.py list-trades --asset-id 0xasset...
 ```
+
 ![](/listtrades.png)
 
 ### Copy a Position
+
 ```bash
 python3 cli.py copy-position --asset-id <ASSET_ID> --skip-question-details
 python3 cli.py copy-position --asset-id <ASSET_ID> --execute  # requires working CopyTrader
 ```
+
 ![](/copyposition.png)
 
 ### Top Trader
+
 ```bash
 python3 cli.py trader-summary --address 0x05c1882212a41aa8d7df5b70eebe03d9319345b7
 python3 cli.py market-price --asset-id <ASSET_ID>
 python3 cli.py top-traders --limit 30000 --top-traders 30 --top-assets 30
 ```
+
 ![](/toptraders.png)
 
 ## Project Layout

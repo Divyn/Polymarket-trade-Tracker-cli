@@ -497,9 +497,94 @@ def analyze_questions(limit: int, max_keywords: int, show_text: bool, log_file: 
         if log_fp is not None:
             log_fp.close()
 
-cli.add_command(analyze_questions, "analyze")
 
-
+@cli.command(name="get-orderbook")
+@click.option('--asset-id', '-a', required=True, help='Asset ID')
+@click.option('--limit', '-l', default=10, help='Number of positions to fetch')
+def get_orderbook(asset_id: str, limit: int):
+    """Get orderbook for a specific asset."""
+    console.print(f"[cyan]Fetching orderbook for asset: {asset_id}[/cyan]")
+    
+    client = BitqueryClient()
+    tracker = PositionTracker(client)
+    
+    try:
+        orderbook = tracker.get_orderbook(asset_id, limit=limit)
+        
+        if not orderbook.get('bids') and not orderbook.get('asks'):
+            console.print(f"[yellow]No orderbook data found for asset ID: {asset_id}[/yellow]")
+            return
+        
+        # Display bids table
+        if orderbook.get('bids'):
+            bids_table = Table(
+                title=f"Bids (Buy Orders) - Asset: {asset_id}",
+                box=box.ROUNDED,
+                expand=True,
+                show_header=True,
+                width=None
+            )
+            bids_table.add_column("Price", style="green", justify="right", min_width=12)
+            bids_table.add_column("Amount", style="yellow", justify="right", min_width=12)
+            bids_table.add_column("Count", style="cyan", justify="right", min_width=8)
+            
+            for bid in orderbook['bids']:
+                bids_table.add_row(
+                    f"{bid['price']:.4f}",
+                    f"{bid['amount']:.4f}",
+                    str(bid['count'])
+                )
+            
+            console.print(bids_table)
+        else:
+            console.print("[yellow]No bids found.[/yellow]")
+        
+        console.print()  # Add spacing
+        
+        # Display asks table
+        if orderbook.get('asks'):
+            asks_table = Table(
+                title=f"Asks (Sell Orders) - Asset: {asset_id}",
+                box=box.ROUNDED,
+                expand=True,
+                show_header=True,
+                width=None
+            )
+            asks_table.add_column("Price", style="red", justify="right", min_width=12)
+            asks_table.add_column("Amount", style="yellow", justify="right", min_width=12)
+            asks_table.add_column("Count", style="cyan", justify="right", min_width=8)
+            
+            for ask in orderbook['asks']:
+                asks_table.add_row(
+                    f"{ask['price']:.4f}",
+                    f"{ask['amount']:.4f}",
+                    str(ask['count'])
+                )
+            
+            console.print(asks_table)
+        else:
+            console.print("[yellow]No asks found.[/yellow]")
+        
+        # Display summary
+        if orderbook.get('total_events') is not None or orderbook.get('total_positions') is not None:
+            console.print()
+            summary_lines = []
+            if orderbook.get('total_events') is not None:
+                summary_lines.append(f"[green]Total Events:[/green] {orderbook['total_events']}")
+            if orderbook.get('total_positions') is not None:
+                summary_lines.append(f"[green]Total Positions:[/green] {orderbook['total_positions']}")
+            
+            if summary_lines:
+                console.print(Panel(
+                    "\n".join(summary_lines),
+                    title="Orderbook Summary",
+                    border_style="cyan"
+                ))
+    
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise click.Abort()
+        
 if __name__ == '__main__':
     cli()
 
