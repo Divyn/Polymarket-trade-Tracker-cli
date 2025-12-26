@@ -60,6 +60,7 @@ Reconstruct orderbook ( bids and asks) from orderfilled events.
 python3 cli.py get-orderbook --asset-id  <ASSET_ID>
 
 ```
+![](/orderbook.png)
 
 ### Monitor a trader
 

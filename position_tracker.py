@@ -663,8 +663,12 @@ class PositionTracker:
             "total_parsed": len(positions)
         }
 
-    def get_orderbook(self,asset_id: str, limit: int = 10) -> Dict:
-        """Get orderbook for a specific asset constructed from recent order filled events.
+    def get_orderbook(self, asset_id: str, limit: int = 200) -> Dict:
+        """Reconstruct recent orderbook snapshot from recent order filled events.
+        
+        This method reconstructs what the orderbook looked like based on completed trades.
+        It processes trades chronologically (oldest first) to build up orderbook depth,
+        showing the state as of the most recent trade.
         
         Args:
             asset_id: The asset ID to get orderbook for
@@ -672,7 +676,7 @@ class PositionTracker:
             
         Returns:
             Dictionary with 'bids' and 'asks' lists, each containing price levels
-            with price, amount, and count of trades at that price level.
+            with price, amount, and count. Also includes 'snapshot_time' timestamp.
         """
         events = self.client.get_order_filled_events_by_asset_id(asset_id=asset_id, limit=limit)
         
@@ -680,7 +684,8 @@ class PositionTracker:
             return {
                 "bids": [],
                 "asks": [],
-                "asset_id": asset_id
+                "asset_id": asset_id,
+                "snapshot_time": None
             }
         
         # Parse events into positions
@@ -689,70 +694,83 @@ class PositionTracker:
             position = self.parse_order_filled_event(event)
             if position and str(position.asset_id).strip() == str(asset_id).strip():
                 positions.append(position)
-        # print(f"Positions: {positions}")
+        
         if not positions:
             return {
                 "bids": [],
                 "asks": [],
-                "asset_id": asset_id
+                "asset_id": asset_id,
+                "snapshot_time": None
             }
         
-        # Aggregate bids and asks by price
-        # Bids: trades where someone bought (paid USDC, received tokens)
-        # Asks: trades where someone sold (gave tokens, received USDC)
-        bid_levels = {}  # price -> {amount, count}
-        ask_levels = {}  # price -> {amount, count}
+        # Sort positions chronologically (oldest first) to build orderbook over time
+        positions.sort(key=lambda p: p.timestamp)
         
+        # Track orderbook depth at each price level
+        # Bids: buy orders (what buyers were willing to pay)
+        # Asks: sell orders (what sellers were willing to accept)
+        bid_levels = {}  # price -> {amount, count, last_trade_time}
+        ask_levels = {}  # price -> {amount, count, last_trade_time}
+        
+        # Process each trade chronologically to build up orderbook depth
         for position in positions:
             price = position.price
             amount = position.amount
             
-            # The trader_address is the buyer (receiving tokens) - this is a bid
-            # The other party (maker or taker) is the seller - this is an ask
-            if position.trader_address:
-                # This is a bid (buy order)
+            # Determine buyer and seller
+            buyer_address = position.trader_address  # The one receiving tokens (buying)
+            
+            # Determine seller: the party that is NOT the buyer
+            seller_address = None
+            if position.maker_address and position.taker_address:
+                if buyer_address:
+                    buyer_lower = buyer_address.lower()
+                    maker_lower = position.maker_address.lower()
+                    taker_lower = position.taker_address.lower()
+                    
+                    if buyer_lower == maker_lower:
+                        seller_address = position.taker_address
+                    elif buyer_lower == taker_lower:
+                        seller_address = position.maker_address
+                    else:
+                        # Fallback: use the non-buyer address
+                        seller_address = position.maker_address if maker_lower != buyer_lower else position.taker_address
+                else:
+                    # If no buyer identified, use maker as seller (fallback)
+                    seller_address = position.maker_address
+            
+            # Add to bids: buyer's willingness to pay at this price
+            if buyer_address:
                 if price not in bid_levels:
-                    bid_levels[price] = {"amount": 0.0, "count": 0}
+                    bid_levels[price] = {"amount": 0.0, "count": 0, "last_trade_time": position.timestamp}
                 bid_levels[price]["amount"] += amount
                 bid_levels[price]["count"] += 1
+                # Update to most recent trade time at this price level
+                if position.timestamp > bid_levels[price]["last_trade_time"]:
+                    bid_levels[price]["last_trade_time"] = position.timestamp
             
-            # The seller is the other party (maker or taker, whichever isn't the trader)
-            # We can infer this from the position data
-            seller_address = None
-            if position.trader_address and position.maker_address and position.taker_address:
-                trader_lower = position.trader_address.lower()
-                maker_lower = position.maker_address.lower()
-                taker_lower = position.taker_address.lower()
-                
-                if trader_lower == maker_lower:
-                    seller_address = position.taker_address
-                elif trader_lower == taker_lower:
-                    seller_address = position.maker_address
-                else:
-                    # Fallback: use the non-trader address
-                    seller_address = position.maker_address if maker_lower != trader_lower else position.taker_address
-            
+            # Add to asks: seller's willingness to accept at this price
             if seller_address:
-                # This is an ask (sell order)
                 if price not in ask_levels:
-                    ask_levels[price] = {"amount": 0.0, "count": 0}
+                    ask_levels[price] = {"amount": 0.0, "count": 0, "last_trade_time": position.timestamp}
                 ask_levels[price]["amount"] += amount
                 ask_levels[price]["count"] += 1
+                # Update to most recent trade time at this price level
+                if position.timestamp > ask_levels[price]["last_trade_time"]:
+                    ask_levels[price]["last_trade_time"] = position.timestamp
         
-        # Convert to sorted lists
-        # Bids: sorted by price descending (highest bid first)
-
+        # Convert to sorted lists for display
+        # Bids: sorted by price descending (highest bid first) - best bid at top
         bids = [
             {
                 "price": price,
                 "amount": level["amount"],
                 "count": level["count"]
             }
-            for price, level in sorted(bid_levels.items(),reverse=True)
+            for price, level in sorted(bid_levels.items(), reverse=True)
         ]
         
-        # Asks: sorted by price ascending (lowest ask first)
-      
+        # Asks: sorted by price ascending (lowest ask first) - best ask at top
         asks = [
             {
                 "price": price,
@@ -762,11 +780,15 @@ class PositionTracker:
             for price, level in sorted(ask_levels.items())
         ]
         
+        # Get snapshot time (most recent trade timestamp)
+        snapshot_time = max(p.timestamp for p in positions) if positions else None
+        
         return {
             "bids": bids,
             "asks": asks,
             "asset_id": asset_id,
             "total_events": len(events),
-            "total_positions": len(positions)
+            "total_positions": len(positions),
+            "snapshot_time": snapshot_time
         }
 

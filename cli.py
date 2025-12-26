@@ -500,10 +500,15 @@ def analyze_questions(limit: int, max_keywords: int, show_text: bool, log_file: 
 
 @cli.command(name="get-orderbook")
 @click.option('--asset-id', '-a', required=True, help='Asset ID')
-@click.option('--limit', '-l', default=10, help='Number of positions to fetch')
+@click.option('--limit', '-l', default=200, help='Number of positions to fetch')
 def get_orderbook(asset_id: str, limit: int):
-    """Get orderbook for a specific asset."""
-    console.print(f"[cyan]Fetching orderbook for asset: {asset_id}[/cyan]")
+    """Reconstruct recent orderbook snapshot from completed trades for a specific asset.
+    
+    This shows what the orderbook looked like based on recent OrderFilled events.
+    The orderbook is reconstructed chronologically, showing depth at each price level.
+    """
+    console.print(f"[cyan]Reconstructing recent orderbook for asset: {asset_id}[/cyan]")
+    console.print("[dim]Note: This is reconstructed from completed trades, not live open orders[/dim]")
     
     client = BitqueryClient()
     tracker = PositionTracker(client)
@@ -514,6 +519,12 @@ def get_orderbook(asset_id: str, limit: int):
         if not orderbook.get('bids') and not orderbook.get('asks'):
             console.print(f"[yellow]No orderbook data found for asset ID: {asset_id}[/yellow]")
             return
+        
+        # Display snapshot time if available
+        if orderbook.get('snapshot_time'):
+            snapshot_str = _format_time(orderbook['snapshot_time'])
+            console.print(f"[dim]Orderbook snapshot as of: {snapshot_str}[/dim]")
+            console.print()
         
         # Display bids table
         if orderbook.get('bids'):
@@ -566,20 +577,21 @@ def get_orderbook(asset_id: str, limit: int):
             console.print("[yellow]No asks found.[/yellow]")
         
         # Display summary
-        if orderbook.get('total_events') is not None or orderbook.get('total_positions') is not None:
-            console.print()
-            summary_lines = []
-            if orderbook.get('total_events') is not None:
-                summary_lines.append(f"[green]Total Events:[/green] {orderbook['total_events']}")
-            if orderbook.get('total_positions') is not None:
-                summary_lines.append(f"[green]Total Positions:[/green] {orderbook['total_positions']}")
-            
-            if summary_lines:
-                console.print(Panel(
-                    "\n".join(summary_lines),
-                    title="Orderbook Summary",
-                    border_style="cyan"
-                ))
+        console.print()
+        summary_lines = []
+        if orderbook.get('total_events') is not None:
+            summary_lines.append(f"[green]Total Events:[/green] {orderbook['total_events']}")
+        if orderbook.get('total_positions') is not None:
+            summary_lines.append(f"[green]Total Positions:[/green] {orderbook['total_positions']}")
+        if orderbook.get('snapshot_time'):
+            summary_lines.append(f"[green]Snapshot Time:[/green] {_format_time(orderbook['snapshot_time'])}")
+        
+        if summary_lines:
+            console.print(Panel(
+                "\n".join(summary_lines),
+                title="Orderbook Summary",
+                border_style="cyan"
+            ))
     
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
